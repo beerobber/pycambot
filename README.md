@@ -8,6 +8,6 @@ The only camera tested with `pycambot` so far is the PTZOptics 20xUSB. The solut
 
 ## Solution elements:
 + Python 2.7
-+ OpenCV 3.1
++ OpenCV 3.2
 + dlib
 + HD PTZ camera supporting VISCA over TCP and USB 3.0 HD video transfer
