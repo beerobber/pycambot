@@ -1,7 +1,6 @@
 import numpy as np
 from imutils import face_utils
 import imutils
-import dlib
 import cv2
 import argparse
 from CameraController import PTZOptics20x
@@ -63,7 +62,8 @@ def createCVCamera(usbdev=0):
     return cvcam
 
 def main():
-    params = CVParameterGroup("Sliders", g_debugMode)
+    #params = CVParameterGroup("Sliders", g_debugMode)
+    params = CVParameterGroup("Sliders", 0)
     setCVParameters(params)
 
     camera = Camera()
@@ -83,12 +83,6 @@ def main():
     # We need to skip the first frame to make sure we don't process bad image data.
     firstFrameSkipped = False
 
-    # initialize dlib's face detector (HOG-based) and then create
-    # the facial landmark predictor
-    # http://www.pyimagesearch.com/2014/11/10/histogram-oriented-gradients-object-detection/
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor(args["shape_predictor"])
-
     # Loop on acquisition
     while 1:
         raw = None
@@ -99,9 +93,27 @@ def main():
             ### This is the primary frame processing block
             fpsCounter.tick()
 
-            raw = imutils.resize(raw, width=800)
+            raw = imutils.resize(raw, width=500)
             gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
-            rects = detector(gray, 1)
+
+	    # scan for faces here
+	    cascPath = "haarcascade_frontalface_default.xml"
+
+	    # Create the haar cascade
+	    faceCascade = cv2.CascadeClassifier(cascPath)
+	    faces = faceCascade.detectMultiScale(
+	        gray,
+	        scaleFactor=1.1,
+	        minNeighbors=5,
+	        minSize=(30, 30)
+	        #flags = cv2.CV_HAAR_SCALE_IMAGE
+	    )
+
+	    print("Found {0} faces!".format(len(faces)))
+
+	    # Draw a rectangle around the faces
+	    for (x, y, w, h) in faces:
+    	        cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
             camera.panPos, camera.tiltPos = camera.controller.get_pan_tilt_position()
             camera.zoomPos = camera.controller.get_zoom_position()
@@ -111,30 +123,6 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             cv2.putText(raw, "Z #{}".format(camera.zoomPos), (5, 75),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-            # loop over the face detections
-            if rects:
-                # determine the facial landmarks for the face region, then
-                # convert the facial landmark (x, y)-coordinates to a NumPy
-                # array
-                shape = predictor(gray, rects[0])
-                shape = face_utils.shape_to_np(shape)
-
-                # convert dlib's rectangle to a OpenCV-style bounding box
-                # [i.e., (x, y, w, h)], then draw the face bounding box
-                (x, y, w, h) = face_utils.rect_to_bb(rects[0])
-                cv2.rectangle(raw, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-                # show the face number
-                # cv2.putText(raw, "Face #{}".format(i + 1), (x - 10, y - 10),
-                #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                cv2.putText(raw, "Face", (x - 10, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-                # loop over the (x, y)-coordinates for the facial landmarks
-                # and draw them on the image
-                for (x, y) in shape:
-                    cv2.circle(raw, (x, y), 1, (0, 0, 255), -1)
 
             # show the output image with the face detections + facial landmarks
             cv2.imshow("Output", raw)
@@ -166,8 +154,6 @@ def main():
 
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser(description="OpenCV/dlib camera operation robot")
-ap.add_argument("-p", "--shape-predictor", required=True,
-                help="path to facial landmark predictor")
 ap.add_argument("--ip", type=str, action="store", required=False,
                 help="IP address of camera, for control and optional stream read")
 ap.add_argument("--port", type=int, action="store", required=False,
