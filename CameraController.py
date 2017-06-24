@@ -62,7 +62,7 @@ class TCPCamera(object):
                 print "No data from camera socket"
                 break
             except socket.error, e:
-                print "Camera socket read error: " + e
+                print "Camera socket read error: " + str(e)
                 break
             total = total + msg
             if msg == "ff":
@@ -78,6 +78,9 @@ class PTZOptics20x(TCPCamera):
 
     Tested with USB 20X model.
     """
+    # Pan/tilt continuing motion
+    _ptContinuousMotion = False
+    
     def __init__(self, host, port):
         """Sony VISCA control class.
 
@@ -96,6 +99,9 @@ class PTZOptics20x(TCPCamera):
         """
         super(self.__class__, self).init()
         return self
+        
+    def panTiltOngoing(self):
+        return True if _ptContinuousMotion else False
 
     def comm(self, com):
         """Sends hexadecimal string to control socket.
@@ -121,7 +127,7 @@ class PTZOptics20x(TCPCamera):
         rep = dict((re.escape(k), v) for k, v in rep.iteritems())
         pattern = re.compile("|".join(rep.keys()))
         return pattern.sub(lambda m: rep[re.escape(m.group(0))], text)
-
+            
     def get_zoom_position(self):
         """Retrieves current zoom position.
         Zoom is 0 to 16384
@@ -152,6 +158,7 @@ class PTZOptics20x(TCPCamera):
         self.comm('81090612FF')
         msg = self.read()[4:-2]
         r = ""
+        #~ print "pan tilt msg: " + msg
         if len(msg) == 16:
             for x in range(1, 9, 2):
                 r += msg[x]
@@ -169,6 +176,8 @@ class PTZOptics20x(TCPCamera):
         :return: True if successful, False if not.
         :rtype: bool
         """
+        # Since home is not continuing motion, we'll call it a stop
+        self._ptContinuousMotion = False
         return self.comm('81010604FF')
 
     def reset(self):
@@ -177,6 +186,7 @@ class PTZOptics20x(TCPCamera):
         :return: True if successful, False if not.
         :rtype: bool
         """
+        self._ptContinuousMotion = False
         return self.comm('81010605FF')
 
     def stop(self):
@@ -185,6 +195,7 @@ class PTZOptics20x(TCPCamera):
         :return: True if successful, False if not.
         :rtype: bool
         """
+        self._ptContinuousMotion = False
         return self.comm('8101060115150303FF')
 
     def cancel(self):
@@ -193,6 +204,7 @@ class PTZOptics20x(TCPCamera):
         :return: True if successful, False if not.
         :rtype: bool
         """
+        self._ptContinuousMotion = False
         return self.comm('81010001FF')
 
     def _move(self, string, a1, a2):
@@ -201,7 +213,56 @@ class PTZOptics20x(TCPCamera):
 
         h2 = "%X" % a2
         h2 = '0' + h2 if len(h2) < 2 else h2
+        self._ptContinuousMotion = True if amount else False
         return self.comm(string.replace('VV', h1).replace('WW', h2))
+
+    def goto(self, pan, tilt, speed=5):
+        """Moves camera to absolute pan and tilt coordinates.
+
+        :param speed: Speed (0-24)
+        :param pan: numeric pan position
+        :param tilt: numeric tilt position
+        :return: True if successful, False if not.
+        :rtype: bool
+        """
+        speed_hex = "%X" % speed
+        speed_hex = '0' + speed_hex if len(speed_hex) < 2 else speed_hex
+
+        pan_hex = "%X" % pan
+        pan_hex = pan_hex if len(pan_hex) > 3 else ("0" * (4 - len(pan_hex))) + pan_hex
+        pan_hex = "0" + "0".join(pan_hex)
+        
+        tilt_hex = "%X" % tilt
+        tilt_hex = tilt_hex if len(tilt_hex) > 3 else ("0" * (4 - len(tilt_hex))) + tilt_hex
+        tilt_hex = "0" + "0".join(tilt_hex)
+            
+        s = '81010602VVWWYYYYZZZZFF'.replace(
+            'VV', speed_hex).replace(
+            'WW', speed_hex).replace(
+            'YYYY', pan_hex).replace(
+            'ZZZZ', tilt_hex)
+        
+        # Not in continuing motion 
+        self._ptContinuousMotion = False
+        
+        return self.comm(s)
+
+    def zoomto(self, zoom):
+        """Moves camera to absolute zoom setting.
+
+        :param zoom: numeric zoom position
+        :return: True if successful, False if not.
+        :rtype: bool
+        """
+        zoom_hex = "%X" % zoom
+        zoom_hex = zoom_hex if len(zoom_hex) > 3 else ("0" * (4 - len(zoom_hex))) + zoom_hex
+        zoom_hex = "0" + "0".join(zoom_hex)
+        
+            
+        s = '81010447pqrsFF'.replace(
+            'pqrs', zoom_hex)
+        print("zoom comm string: " + s)
+        return self.comm(s)
 
     def left(self, amount=5):
         """Modifies pan speed to left.
@@ -212,7 +273,8 @@ class PTZOptics20x(TCPCamera):
         """
         hex_string = "%X" % amount
         hex_string = '0' + hex_string if len(hex_string) < 2 else hex_string
-        s = '81010601VVWW0103FF'.replace('VV', hex_string).replace('WW', str(15))
+        s = '81010602VVWW0103FF'.replace('VV', hex_string).replace('WW', str(15))
+        self._ptContinuousMotion = True if amount else False
         return self.comm(s)
 
     def right(self, amount=5):
@@ -224,6 +286,7 @@ class PTZOptics20x(TCPCamera):
         hex_string = "%X" % amount
         hex_string = '0' + hex_string if len(hex_string) < 2 else hex_string
         s = '81010601VVWW0203FF'.replace('VV', hex_string).replace('WW', str(15))
+        self._ptContinuousMotion = True if amount else False
         return self.comm(s)
 
     def up(self, amount=5):
@@ -235,6 +298,7 @@ class PTZOptics20x(TCPCamera):
         hs = "%X" % amount
         hs = '0' + hs if len(hs) < 2 else hs
         s = '81010601VVWW0301FF'.replace('VV', str(15)).replace('WW', hs)
+        self._ptContinuousMotion = True if amount else False
         return self.comm(s)
 
     def down(self, amount=5):
@@ -246,6 +310,7 @@ class PTZOptics20x(TCPCamera):
         hs = "%X" % amount
         hs = '0' + hs if len(hs) < 2 else hs
         s = '81010601VVWW0302FF'.replace('VV', str(15)).replace('WW', hs)
+        self._ptContinuousMotion = True if amount else False
         return self.comm(s)
 
     def left_up(self, pan, tilt):

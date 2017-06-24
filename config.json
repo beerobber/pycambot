@@ -1,0 +1,27 @@
+{
+    "cambot":{
+        "debugMode": true,
+        "testImage": null
+    },
+    "face":{
+        "recentThresholdSeconds": 3
+    },
+    "camera":{
+        "ip": "10.9.8.31",
+        "viscaport": 5678
+    },
+    "stage":{
+        "homePan": 65098,
+        "homeTilt": 150,
+        "homeZoom": 50,
+        "maxLeftPan": 64671,
+        "maxRightPan": 256,
+        "trackingZoom": 1906,
+        "trackingTilt": 210
+    },
+    "scene":{
+        "minConfidence": 45,
+        "homePauseSeconds": 10,
+        "returnHomeSpeed": 10
+    }
+}

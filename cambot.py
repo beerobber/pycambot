@@ -3,13 +3,13 @@ from imutils import face_utils
 import imutils
 import cv2
 import argparse
+import json
 from CameraController import PTZOptics20x
 import time, sys, os, signal
 
 
 from RealtimeInterval import RealtimeInterval
 from CVParameterGroup import CVParameterGroup
-import TriangleSimilarityDistanceCalculator as DistanceCalculator
 import CameraReaderAsync
 from WeightedFramerateCounter import WeightedFramerateCounter
 
@@ -21,10 +21,66 @@ from WeightedFramerateCounter import WeightedFramerateCounter
 # Tunable parameters
 
 g_debugMode = True
-g_cameraFrameWidth = 0
-g_cameraFrameHeight = 0
 g_testImage = None
 
+class Face():
+    _recentThresholdSeconds = 0
+
+    visible = False
+    didDisappear = False
+    recentlyVisible = False
+    lastSeenTime = 0
+    firstSeenTime = 0
+    hcenter = -1
+    
+    def __init__(self, cfg):
+        self._recentThresholdSeconds = cfg["recentThresholdSeconds"]
+    
+    def found(self, hcenter):
+        now = time.time()
+        if not self.visible:
+            self.firstSeenTime = now
+        self.lastSeenTime = now
+
+        self.hcenter = hcenter
+        self.visible = True
+        self.recentlyVisible = True
+        self.didDisappear = False
+        return
+        
+    def lost(self):
+        now = time.time()
+        if self.visible:
+            self.didDisappear = True
+            self.firstSeenTime = 0
+        else:
+            self.didDisappear = False
+        if now - self.lastSeenTime <= self._recentThresholdSeconds:
+            self.recentlyVisible = True
+        else:
+            self.recenlyVisible = False
+        self.visible = False
+        return
+        
+    def age(self):
+        now = time.time()
+        if self.firstSeenTime:
+            return now - self.firstSeenTime
+        else:
+            return 0
+
+class Subject():
+    hcenter = -1
+    offset = 0
+    offsetHistory = {}
+    isCentered = True
+    isFarLeft = False
+    isFarRight = False
+    
+    def evaluate(self, face, camera):
+        self.hcenter = face.hcenter
+        return
+        
 class Camera():
     cvcamera = None
     cvreader = None
@@ -36,84 +92,93 @@ class Camera():
     panPos = 0
     tiltPos = 0
     zoomPos = 0
+    
+    def __init__(self, cfg, usbdevnum):
+        self.ip = cfg["ip"]
+        self.viscaport = int(cfg["viscaport"])
+        self.cvcamera = cv2.VideoCapture(usbdevnum)
+        self.width = int(self.cvcamera.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.height = int(self.cvcamera.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.cvreader = CameraReaderAsync.CameraReaderAsync(self.cvcamera)
+        self.controller = PTZOptics20x(self.ip, self.viscaport)
+        self.controller.init()
 
+class Stage():	
+    def __init__(self, cfg):
+        self.homePan = cfg['homePan']
+        self.homeTilt = cfg['homeTilt']
+        self.homeZoom = cfg['homeZoom']
+        self.maxLeftPan = cfg['maxLeftPan']
+        self.maxRightPan = cfg['maxRightPan']
+        self.trackingZoom = cfg['trackingZoom']
+        self.trackingTilt = cfg['trackingTilt']
+        
+class Scene():
+    homePauseTimer = None
+    atHome = False
+    confidence = 0.01
+    
+    def __init__(self, cfg, camera, stage):
+        self.minConfidence = cfg["minConfidence"]
+        self.homePauseSeconds = cfg["homePauseSeconds"]
+        self.returnHomeSpeed = cfg["returnHomeSpeed"]
+        
+        camera.controller.reset()
+        self.goHome(camera, stage)
+        
+    def goHome(self, camera, stage):
+        camera.controller.goto(
+            stage.homePan, 
+            stage.homeTilt, 
+            speed=self.returnHomeSpeed)
+        camera.controller.zoomto(stage.homeZoom)
+        self.homePauseTimer = RealtimeInterval(self.homePauseSeconds, False)
+        self.atHome = True
+    
+    def evaluate(self, camera, stage, subject, faceCount):
+        self.confidence = 1.0/faceCount if faceCount else 0
+        
+        # Are we in motion and should we stay in motion?
+        
+        # Should we return to home position?
+        
+        # Should we initiate tracking motion?
+        
+        if self.atHome and self.homePauseTimer.hasElapsed():
+            print("been home long enough, ready to track")
+        return
+    
+    def trackSubject(self, camera, stage, subject):
+        self.atHome = False
+        return
 
 def printif(message):
     if g_debugMode:
         print message
 
-def setCVParameters(params):
-    # HUES: GREEEN=65/75 BLUE=110
-    params.addParameter("hue", 75, 179)
-    params.addParameter("hueWidth", 20, 25)
-    params.addParameter("low", 70, 255)
-    params.addParameter("high", 255, 255)
-    params.addParameter("countourSize", 50, 200)
-    params.addParameter("keystone", 0, 320)
-
-def createCVCamera(usbdev=0):
-    # return a camera object with exposure and contrast set
-    global g_cameraFrameWidth
-    global g_cameraFrameHeight
-
-    cvcam = cv2.VideoCapture(usbdev)
-    g_cameraFrameWidth = int(cvcam.get(cv2.CAP_PROP_FRAME_WIDTH))
-    g_cameraFrameHeight = int(cvcam.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    return cvcam
-
 def main():
-    #params = CVParameterGroup("Sliders", g_debugMode)
-    params = CVParameterGroup("Sliders", 0)
-    setCVParameters(params)
-
-    camera = Camera()
-    camera.ip = args["ip"]
-    camera.viscaport = args["port"]
-
-    # Start the camera
-    camera.cvcamera = createCVCamera(args["usbDeviceNum"])
-    camera.cvreader = CameraReaderAsync.CameraReaderAsync(camera.cvcamera)
-    camera.controller = PTZOptics20x(camera.ip, camera.viscaport)
-    camera.controller.init()
-
+    camera = Camera(cfg['camera'], args["usbDeviceNum"])
+    stage = Stage(cfg['stage'])
+    subject = Subject()
+    face = Face(cfg['face'])
+    scene = Scene(cfg['scene'], camera, stage)
+    
     fpsDisplay = True
     fpsCounter = WeightedFramerateCounter()
     fpsInterval = RealtimeInterval(5.0, False)
-
-    # We need to skip the first frame to make sure we don't process bad image data.
-    firstFrameSkipped = False
 
     # Loop on acquisition
     while 1:
         raw = None
         raw = camera.cvreader.Read()
 
-        if raw is not None and firstFrameSkipped:
+        if raw is not None:
 
             ### This is the primary frame processing block
             fpsCounter.tick()
 
             raw = imutils.resize(raw, width=500)
             gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
-
-	    # scan for faces here
-	    cascPath = "haarcascade_frontalface_default.xml"
-
-	    # Create the haar cascade
-	    faceCascade = cv2.CascadeClassifier(cascPath)
-	    faces = faceCascade.detectMultiScale(
-	        gray,
-	        scaleFactor=1.1,
-	        minNeighbors=5,
-	        minSize=(30, 30)
-	        #flags = cv2.CV_HAAR_SCALE_IMAGE
-	    )
-
-	    print("Found {0} faces!".format(len(faces)))
-
-	    # Draw a rectangle around the faces
-	    for (x, y, w, h) in faces:
-    	        cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
             camera.panPos, camera.tiltPos = camera.controller.get_pan_tilt_position()
             camera.zoomPos = camera.controller.get_zoom_position()
@@ -123,16 +188,42 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             cv2.putText(raw, "Z #{}".format(camera.zoomPos), (5, 75),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            # scan for faces here against a grayscale frame
+            cascPath = "haarcascade_frontalface_default.xml"
+            faceCascade = cv2.CascadeClassifier(cascPath)
+            faces = faceCascade.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(30, 30)
+                #flags = cv2.CV_HAAR_SCALE_IMAGE
+            )
 
-            # show the output image with the face detections + facial landmarks
-            cv2.imshow("Output", raw)
+            #~ printif("Found {0} faces!".format(len(faces)))
+            
+            if len(faces):
+                (x, __, w, __) = faces[0]
+                face.found(x + w/2)
+            else:
+                face.lost()
 
-        if raw is not None:
-            firstFrameSkipped = True
+            # Decorate the image with CV findings and camera stats
+            for (x, y, w, h) in faces:
+                    cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+            subject.evaluate(face, camera)
+            scene.evaluate(camera, stage, subject, len(faces))
+
+            # show the output image with decorations
+            if g_debugMode:
+                cv2.imshow("Output", raw) 
+
         if fpsDisplay and fpsInterval.hasElapsed():
             print "{0:.1f} fps (processing)".format(fpsCounter.getFramerate())
             if camera.cvreader is not None:
                 print "{0:.1f} fps (camera)".format(camera.cvreader.fps.getFramerate())
+            print "Face has been seen for {0:.1f} seconds".format(face.age())
 
         # Monitor for control keystrokes in debug mode
         if g_debugMode:
@@ -145,19 +236,16 @@ def main():
     printif("Cleaning up")
     if camera.cvreader is not None:
         camera.cvreader.Stop()
-
+        time.sleep(0.5)
     if camera.cvcamera is not None:
         camera.cvcamera.release()
-    cv2.destroyAllWindows()
+    if g_debugMode:
+        cv2.destroyAllWindows() 
 
     printif("End of main function")
 
 # construct the argument parser and parse the arguments
-ap = argparse.ArgumentParser(description="OpenCV/dlib camera operation robot")
-ap.add_argument("--ip", type=str, action="store", required=False,
-                help="IP address of camera, for control and optional stream read")
-ap.add_argument("--port", type=int, action="store", required=False,
-                help="port for TCP control of camera")
+ap = argparse.ArgumentParser(description="OpenCV camera operation robot")
 ap.add_argument("--usb", dest="usbDeviceNum", type=int, action="store", default=0,
                 help="USB device number; USB device 0 is the default camera")
 ap.add_argument("--stream", type=str, action="store",
@@ -166,7 +254,9 @@ ap.add_argument("--release", dest="releaseMode", action="store_const", const=Tru
                     help="hides all debug windows (default: False)")
 args = vars(ap.parse_args())
 g_debugMode = not args["releaseMode"]
-#g_debugMode = not args.releaseMode
+
+with open("config.json", "r") as configFile:
+    cfg = json.load(configFile)
 
 main()
 exit()
