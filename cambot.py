@@ -238,7 +238,6 @@ class Scene():
         self.zoomTimer = RealtimeInterval(cfg["zoomMaxSecondsSafety"], False)
         
         camera.controller.reset()
-        self.goHome(camera, stage)
                 
     def goHome(self, camera, stage):
         camera.controller.cancel()
@@ -279,10 +278,9 @@ class Scene():
         and self.requestedZoomPos > 0 \
         and self.requestedZoomPos < stage.trackingZoom \
         and not camera.controller.zoomOngoing():
+            camera.controller.gotoIncremental(0, stage.trackingTiltAdjustment, 5)
             camera.controller.zoomto(stage.trackingZoom)
             self.requestedZoomPos = stage.trackingZoom
-            # Adjust to tracking tilt
-            camera.controller.gotoIncremental(0, stage.trackingTiltAdjustment, 5)
         
         if subject.isFarLeft:
             camera.controller.left(1)

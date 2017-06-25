@@ -15,13 +15,13 @@
         "viscaport": 5678
     },
     "stage":{
-        "homePan": 65098,
-        "homeTilt": 150,
-        "homeZoom": 50,
+        "homePan": 65521,
+        "homeTilt": 65474,
+        "homeZoom": 11306,
         "maxLeftPan": 64671,
         "maxRightPan": 256,
-        "trackingZoom": 1250,
-        "trackingTiltAdjustment": 60
+        "trackingZoom": 13611,
+        "trackingTiltAdjustment": 15
     },
     "scene":{
         "imageWidth": 500,
