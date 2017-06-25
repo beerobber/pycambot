@@ -6,6 +6,10 @@
     "face":{
         "recentThresholdSeconds": 3
     },
+    "subject":{
+        "centeredPercentVariance": 20,
+        "offCenterPercentVariance": 60 
+    },
     "camera":{
         "ip": "10.9.8.31",
         "viscaport": 5678
@@ -16,12 +20,14 @@
         "homeZoom": 50,
         "maxLeftPan": 64671,
         "maxRightPan": 256,
-        "trackingZoom": 1906,
+        "trackingZoom": 1250,
         "trackingTilt": 210
     },
     "scene":{
+        "imageWidth": 500,
         "minConfidence": 45,
-        "homePauseSeconds": 10,
-        "returnHomeSpeed": 10
+        "homePauseSeconds": 3,
+        "returnHomeSpeed": 10,
+        "zoomMaxSecondsSafety": 2
     }
 }

@@ -58,7 +58,7 @@ class Face():
         if now - self.lastSeenTime <= self._recentThresholdSeconds:
             self.recentlyVisible = True
         else:
-            self.recenlyVisible = False
+            self.recentlyVisible = False
         self.visible = False
         return
         
@@ -72,14 +72,95 @@ class Face():
 class Subject():
     hcenter = -1
     offset = 0
-    offsetHistory = {}
+    offsetHistory = []
+    isPresent = False
     isCentered = True
     isFarLeft = False
     isFarRight = False
     
-    def evaluate(self, face, camera):
-        self.hcenter = face.hcenter
+    def __init__(self, cfg):
+        self.centeredPercentVariance = cfg["centeredPercentVariance"]
+        self.offCenterPercentVariance = cfg["offCenterPercentVariance"]
+    
+    def manageOffsetHistory(self, rawOffset):
+        self.offsetHistory.append(rawOffset)
+        if (len(self.offsetHistory) > 10):
+            self.offsetHistory.pop(0)
         return
+        
+    def isVolatile(self):
+        if len(self.offsetHistory) < 2:
+            return True
+        # volatility is shown when consecutive offsets have large
+        # deltas. We will calculate the deltas and average them.
+        deltas = []
+        history = iter(self.offsetHistory)
+        prior = history.next()
+        current = history.next()
+        try:
+            while True:
+                deltas.append(abs(current - prior))
+                prior = current
+                current = history.next()
+        except StopIteration:
+            pass
+        avgDelta = float(sum(deltas) / len(deltas))
+        return True if avgDelta > 9 else False
+        
+    def evaluate(self, face, scene):
+        if not face.visible:
+            if not face.recentlyVisible:
+                # If we haven't seen a face in a while, reset
+                self.hcenter = -1
+                self.offset = 0
+                self.isPresent = False
+                self.isCentered = True
+                self.isFarLeft = False
+                self.isFarRight = False
+            # If we still have a recent subject location, keep it
+            self.isPresent = True
+            return
+        
+        # We have a subject and can characterize location in the frame 
+        self.isPresent = True    
+        self.hcenter = face.hcenter
+        frameCenter = scene.imageWidth / 2.0
+        self.offset = frameCenter - self.hcenter
+        percentVariance = (self.offset * 2.0 / frameCenter) * 100
+        self.manageOffsetHistory(percentVariance)
+        #~ print "hcenter: {0:d}; offset: {1:f}; variance: {2:f}".format(
+            #~ self.hcenter,
+            #~ self.offset,
+            #~ percentVariance)
+        if abs(percentVariance) <= self.centeredPercentVariance:
+            self.isCentered = True
+        else:
+            self.isCentered = False
+        if abs(percentVariance) > self.offCenterPercentVariance:
+            if self.hcenter < frameCenter:
+                self.isFarLeft = True
+            else:
+                self.isFarRight = True
+        else:
+            self.isFarLeft = False
+            self.isFarRight = False
+        return
+
+    def text(self):
+        msg = "Subj: "
+        msg += "! " if self.isVolatile() else "- "
+        if not self.isPresent:
+            msg += "..."
+            return msg
+        if not self.isCentered and not self.isFarLeft and not self.isFarRight:
+            msg += "oOo"
+        if self.isCentered:
+            msg += ".|."
+        if self.isFarLeft:
+            msg += "<.."
+        if self.isFarRight:
+            msg += "..>"
+        return msg
         
 class Camera():
     cvcamera = None
@@ -91,17 +172,44 @@ class Camera():
     height = 0
     panPos = 0
     tiltPos = 0
-    zoomPos = 0
+    zoomPos = -1
+    _badPTZcount = 0
     
     def __init__(self, cfg, usbdevnum):
+        # Start by establishing control connection
         self.ip = cfg["ip"]
         self.viscaport = int(cfg["viscaport"])
+        self.controller = PTZOptics20x(self.ip, self.viscaport)
+        if self.controller.init() is None:
+            self.controller = None
+            print "Exception: Can't communicate with " + \
+                str(self.ip) + ":" + str(self.viscaport)
+            return None
+
+        # Open video stream as CV camera
         self.cvcamera = cv2.VideoCapture(usbdevnum)
         self.width = int(self.cvcamera.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cvcamera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.cvreader = CameraReaderAsync.CameraReaderAsync(self.cvcamera)
-        self.controller = PTZOptics20x(self.ip, self.viscaport)
-        self.controller.init()
+    
+    def lostPTZfeed(self):
+        return False if self._badPTZcount < 5 else True
+            
+    def updatePTZ(self):
+        nowPanPos, nowTiltPos = self.controller.get_pan_tilt_position()
+        nowZoomPos = self.controller.get_zoom_position()
+        
+        if nowZoomPos < 0:
+            self._badPTZcount += 1
+            return
+
+        self._badPTZcount = 0
+        print "P: {0:d} T: {1:d} Z: {2:d}".format( \
+            nowPanPos, nowTiltPos, nowZoomPos)
+        
+        self.panPos = nowPanPos
+        self.tiltPos = nowTiltPos
+        self.zoomPos = nowZoomPos
 
 class Stage():	
     def __init__(self, cfg):
@@ -115,60 +223,112 @@ class Stage():
         
 class Scene():
     homePauseTimer = None
+    zoomTimer = None
     atHome = False
+    subjectVolatile = True
     confidence = 0.01
+    lastKnownZoom = -1
     
     def __init__(self, cfg, camera, stage):
+        self.imageWidth = cfg["imageWidth"]
         self.minConfidence = cfg["minConfidence"]
-        self.homePauseSeconds = cfg["homePauseSeconds"]
         self.returnHomeSpeed = cfg["returnHomeSpeed"]
+        self.homePauseSeconds = cfg["homePauseSeconds"]
+        self.homePauseTimer = RealtimeInterval(cfg["homePauseSeconds"], False)
+        self.zoomTimer = RealtimeInterval(cfg["zoomMaxSecondsSafety"], False)
         
         camera.controller.reset()
         self.goHome(camera, stage)
-        
+                
     def goHome(self, camera, stage):
+        camera.controller.cancel()
+        camera.controller.stop()
         camera.controller.goto(
             stage.homePan, 
             stage.homeTilt, 
             speed=self.returnHomeSpeed)
         camera.controller.zoomto(stage.homeZoom)
-        self.homePauseTimer = RealtimeInterval(self.homePauseSeconds, False)
         self.atHome = True
-    
-    def evaluate(self, camera, stage, subject, faceCount):
-        self.confidence = 1.0/faceCount if faceCount else 0
+        self.lastKnownZoom = stage.homeZoom
+        time.sleep(self.homePauseSeconds)
         
+    def evaluate(self, camera, stage, subject, face, faceCount):
+        self.confidence = 100.0/faceCount if faceCount else 0
+        self.subjectVolatile = subject.isVolatile()
+        if camera.zoomPos is not None and camera.zoomPos > 0:
+            self.lastKnownZoom = camera.zoomPos
+
+        if camera.lostPTZfeed():
+            camera.controller.zoomstop()
+
+        # Halt zoom if we are at correct tracking zoom level
+        if camera.controller.zoomOngoing():
+            if self.lastKnownZoom > stage.trackingZoom:
+                camera.controller.zoomstop()
+                       
         # Are we in motion and should we stay in motion?
+        if camera.controller.panTiltOngoing():
+            if self.confidence < self.minConfidence \
+            or not face.recentlyVisible \
+            or self.subjectVolatile \
+            or subject.isCentered:
+                camera.controller.stop()
         
         # Should we return to home position?
+        if not face.recentlyVisible \
+        and not self.atHome:
+            self.goHome(camera, stage)
+            time.sleep(1)
+            return
+            
+        if not face.recentlyVisible:
+            return
+         
+        # With many caveats...start zooming in on stable subject    
+        if False and subject.isCentered \
+        and not self.subjectVolatile \
+        and self.lastKnownZoom > 0 \
+        and self.lastKnownZoom < stage.trackingZoom \
+        and not camera.controller.zoomOngoing():
+            camera.controller.zoomin(0)
+            self.zoomTimer.reset()
+            # This is a cheat, in case camera doesn't report Z well
+            self.lastKnownZoom = stage.trackingZoom
         
-        # Should we initiate tracking motion?
-        
-        if self.atHome and self.homePauseTimer.hasElapsed():
-            print("been home long enough, ready to track")
+        # Maybe we don't need to track
+        if subject.isCentered:
+            return
+            
+        if subject.isFarLeft:
+            camera.controller.left(1)
+            self.atHome = False
+        elif subject.isFarRight:
+            camera.controller.right(1)
+            self.atHome = False
+                
         return
     
-    def trackSubject(self, camera, stage, subject):
-        self.atHome = False
-        return
-
 def printif(message):
     if g_debugMode:
         print message
 
-def main():
+def main(cfg):
     camera = Camera(cfg['camera'], args["usbDeviceNum"])
+    if camera.controller is None:
+        print "Failed to initialize camera"
+        return False
     stage = Stage(cfg['stage'])
-    subject = Subject()
+    subject = Subject(cfg['subject'])
     face = Face(cfg['face'])
     scene = Scene(cfg['scene'], camera, stage)
     
     fpsDisplay = True
     fpsCounter = WeightedFramerateCounter()
-    fpsInterval = RealtimeInterval(5.0, False)
+    fpsInterval = RealtimeInterval(10.0, False)
 
     # Loop on acquisition
     while 1:
+        camera.updatePTZ()
         raw = None
         raw = camera.cvreader.Read()
 
@@ -177,17 +337,19 @@ def main():
             ### This is the primary frame processing block
             fpsCounter.tick()
 
-            raw = imutils.resize(raw, width=500)
+            raw = imutils.resize(raw, width=scene.imageWidth)
             gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
+            
+            #~ panMsg = "*" if camera.controller.panTiltOngoing() else "-"
+            #~ tiltMsg = "-"
+            #~ zoomMsg =  "*" if camera.controller.zoomOngoing() else "-"
 
-            camera.panPos, camera.tiltPos = camera.controller.get_pan_tilt_position()
-            camera.zoomPos = camera.controller.get_zoom_position()
-            cv2.putText(raw, "P #{}".format(camera.panPos), (5, 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            cv2.putText(raw, "T #{}".format(camera.tiltPos), (5, 45),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            cv2.putText(raw, "Z #{}".format(camera.zoomPos), (5, 75),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            #~ cv2.putText(raw, "P {} #{}".format(panMsg, camera.panPos), (5, 15),
+                        #~ cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            #~ cv2.putText(raw, "T {} #{}".format(tiltMsg, camera.tiltPos), (5, 45),
+                        #~ cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            #~ cv2.putText(raw, "Z {} #{}".format(zoomMsg, camera.zoomPos), (5, 75),
+                        #~ cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             
             # scan for faces here against a grayscale frame
             cascPath = "haarcascade_frontalface_default.xml"
@@ -201,28 +363,30 @@ def main():
             )
 
             #~ printif("Found {0} faces!".format(len(faces)))
-            
             if len(faces):
                 (x, __, w, __) = faces[0]
-                face.found(x + w/2)
+                face.found(x + w/2)                
             else:
                 face.lost()
+            subject.evaluate(face, scene)
+            scene.evaluate(camera, stage, subject, face, len(faces))
 
             # Decorate the image with CV findings and camera stats
-            for (x, y, w, h) in faces:
-                    cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            #~ cv2.putText(raw, subject.text(), (5, 105),
+                #~ cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-            subject.evaluate(face, camera)
-            scene.evaluate(camera, stage, subject, len(faces))
+            #~ for (x, y, w, h) in faces:
+                    #~ cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
             # show the output image with decorations
-            if g_debugMode:
-                cv2.imshow("Output", raw) 
+            # (not easy to do on Docker)
+            #~ if g_debugMode:
+                #~ cv2.imshow("Output", raw) 
 
         if fpsDisplay and fpsInterval.hasElapsed():
             print "{0:.1f} fps (processing)".format(fpsCounter.getFramerate())
-            if camera.cvreader is not None:
-                print "{0:.1f} fps (camera)".format(camera.cvreader.fps.getFramerate())
+            #~ if camera.cvreader is not None:
+                #~ print "{0:.1f} fps (camera)".format(camera.cvreader.fps.getFramerate())
             print "Face has been seen for {0:.1f} seconds".format(face.age())
 
         # Monitor for control keystrokes in debug mode
@@ -258,5 +422,5 @@ g_debugMode = not args["releaseMode"]
 with open("config.json", "r") as configFile:
     cfg = json.load(configFile)
 
-main()
+main(cfg)
 exit()

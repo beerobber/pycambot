@@ -29,14 +29,17 @@ class TCPCamera(object):
         :return: Camera object.
         :rtype: TCPCamera
         """
-        print "Initializing"
+        print "Connecting to camera..."
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.settimeout(0.6)
         try:
             self._socket.connect((self._tcp_host, self._tcp_port))
         except:
             print "Could not connect to camera on control channel"
+            return None
+        print "Camera connected"
         self._socket.settimeout(0.2)
+        return self
 
     def command(self, com):
         """Sends hexadecimal string to TCP control socket.
@@ -80,6 +83,8 @@ class PTZOptics20x(TCPCamera):
     """
     # Pan/tilt continuing motion
     _ptContinuousMotion = False
+    # Continuous zoom change initiated
+    _zContinuous = False
     
     def __init__(self, host, port):
         """Sony VISCA control class.
@@ -97,11 +102,16 @@ class PTZOptics20x(TCPCamera):
         :return: Camera object.
         :rtype: TCPCamera
         """
-        super(self.__class__, self).init()
+        if super(self.__class__, self).init() is None:
+            return None
+        print "Camera controller initialized"
         return self
         
     def panTiltOngoing(self):
-        return True if _ptContinuousMotion else False
+        return True if self._ptContinuousMotion else False
+        
+    def zoomOngoing(self):
+        return True if self._zContinuous else False
 
     def comm(self, com):
         """Sends hexadecimal string to control socket.
@@ -187,6 +197,7 @@ class PTZOptics20x(TCPCamera):
         :rtype: bool
         """
         self._ptContinuousMotion = False
+        self._zContinuous = False
         return self.comm('81010605FF')
 
     def stop(self):
@@ -205,6 +216,7 @@ class PTZOptics20x(TCPCamera):
         :rtype: bool
         """
         self._ptContinuousMotion = False
+        self._zContinuous = False
         return self.comm('81010001FF')
 
     def _move(self, string, a1, a2):
@@ -213,7 +225,7 @@ class PTZOptics20x(TCPCamera):
 
         h2 = "%X" % a2
         h2 = '0' + h2 if len(h2) < 2 else h2
-        self._ptContinuousMotion = True if amount else False
+        self._ptContinuousMotion = True
         return self.comm(string.replace('VV', h1).replace('WW', h2))
 
     def goto(self, pan, tilt, speed=5):
@@ -247,6 +259,31 @@ class PTZOptics20x(TCPCamera):
         
         return self.comm(s)
 
+    def zoomstop(self):
+        """Halt the zoom motor
+        
+        :return: True on success, False on failure
+        :rtype: bool
+        """
+        s = '8101040700FF'
+        self._zContinuous = False
+        return self.comm(s)
+        
+    def zoomin(self, speed=0):
+        """Initiate tele zoom at speed range 0-7
+        
+        :param speed: zoom speed, 0-7
+        :return: True on success, False on failure
+        :rtype: bool
+        """
+        if -1 < speed > 7:
+            return False
+        s = '810104072pFF'.replace(
+            'p', "{0:1s}".format(str(speed)))
+        print("zoomin comm string: " + s)
+        self._zContinuous = True
+        return self.comm(s)
+            
     def zoomto(self, zoom):
         """Moves camera to absolute zoom setting.
 
@@ -261,7 +298,6 @@ class PTZOptics20x(TCPCamera):
             
         s = '81010447pqrsFF'.replace(
             'pqrs', zoom_hex)
-        print("zoom comm string: " + s)
         return self.comm(s)
 
     def left(self, amount=5):
@@ -273,8 +309,8 @@ class PTZOptics20x(TCPCamera):
         """
         hex_string = "%X" % amount
         hex_string = '0' + hex_string if len(hex_string) < 2 else hex_string
-        s = '81010602VVWW0103FF'.replace('VV', hex_string).replace('WW', str(15))
-        self._ptContinuousMotion = True if amount else False
+        s = '81010601VVWW0103FF'.replace('VV', hex_string).replace('WW', str(15))
+        self._ptContinuousMotion = True
         return self.comm(s)
 
     def right(self, amount=5):
@@ -286,7 +322,7 @@ class PTZOptics20x(TCPCamera):
         hex_string = "%X" % amount
         hex_string = '0' + hex_string if len(hex_string) < 2 else hex_string
         s = '81010601VVWW0203FF'.replace('VV', hex_string).replace('WW', str(15))
-        self._ptContinuousMotion = True if amount else False
+        self._ptContinuousMotion = True
         return self.comm(s)
 
     def up(self, amount=5):
@@ -298,7 +334,7 @@ class PTZOptics20x(TCPCamera):
         hs = "%X" % amount
         hs = '0' + hs if len(hs) < 2 else hs
         s = '81010601VVWW0301FF'.replace('VV', str(15)).replace('WW', hs)
-        self._ptContinuousMotion = True if amount else False
+        self._ptContinuousMotion = True
         return self.comm(s)
 
     def down(self, amount=5):
@@ -310,7 +346,7 @@ class PTZOptics20x(TCPCamera):
         hs = "%X" % amount
         hs = '0' + hs if len(hs) < 2 else hs
         s = '81010601VVWW0302FF'.replace('VV', str(15)).replace('WW', hs)
-        self._ptContinuousMotion = True if amount else False
+        self._ptContinuousMotion = True
         return self.comm(s)
 
     def left_up(self, pan, tilt):

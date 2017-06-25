@@ -3,7 +3,7 @@ import binascii
 import CameraController
 import time
 
-ip = '10.0.1.31'
+ip = '10.9.8.31'
 port = 5678
 buffer_size = 1
 
@@ -21,8 +21,12 @@ camera.init()
 # camera.stop()
 # camera.end()
 
+camera.left(6)
+time.sleep(2)
+camera.stop()
 
-while 1:
-    camera.get_zoom_position()
-    camera.get_pan_tilt_position()
-    time.sleep(2)
+
+#~ while 1:
+    #~ camera.get_zoom_position()
+    #~ camera.get_pan_tilt_position()
+    #~ time.sleep(2)
