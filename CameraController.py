@@ -259,6 +259,37 @@ class PTZOptics20x(TCPCamera):
         
         return self.comm(s)
 
+    def gotoIncremental(self, pan, tilt, speed=5):
+        """Moves camera to relative pan and tilt coordinates.
+
+        :param speed: Speed (0-24)
+        :param pan: numeric pan adjustment
+        :param tilt: numeric tilt adjustment
+        :return: True if successful, False if not.
+        :rtype: bool
+        """
+        speed_hex = "%X" % speed
+        speed_hex = '0' + speed_hex if len(speed_hex) < 2 else speed_hex
+
+        pan_hex = "%X" % pan
+        pan_hex = pan_hex if len(pan_hex) > 3 else ("0" * (4 - len(pan_hex))) + pan_hex
+        pan_hex = "0" + "0".join(pan_hex)
+        
+        tilt_hex = "%X" % tilt
+        tilt_hex = tilt_hex if len(tilt_hex) > 3 else ("0" * (4 - len(tilt_hex))) + tilt_hex
+        tilt_hex = "0" + "0".join(tilt_hex)
+            
+        s = '81010603VVWWYYYYZZZZFF'.replace(
+            'VV', speed_hex).replace(
+            'WW', speed_hex).replace(
+            'YYYY', pan_hex).replace(
+            'ZZZZ', tilt_hex)
+        
+        # Not in continuing motion 
+        self._ptContinuousMotion = False
+        
+        return self.comm(s)
+    
     def zoomstop(self):
         """Halt the zoom motor
         

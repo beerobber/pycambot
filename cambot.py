@@ -219,7 +219,7 @@ class Stage():
         self.maxLeftPan = cfg['maxLeftPan']
         self.maxRightPan = cfg['maxRightPan']
         self.trackingZoom = cfg['trackingZoom']
-        self.trackingTilt = cfg['trackingTilt']
+        self.trackingTiltAdjustment = cfg['trackingTiltAdjustment']
         
 class Scene():
     homePauseTimer = None
@@ -227,7 +227,7 @@ class Scene():
     atHome = False
     subjectVolatile = True
     confidence = 0.01
-    lastKnownZoom = -1
+    requestedZoomPos = -1
     
     def __init__(self, cfg, camera, stage):
         self.imageWidth = cfg["imageWidth"]
@@ -249,23 +249,13 @@ class Scene():
             speed=self.returnHomeSpeed)
         camera.controller.zoomto(stage.homeZoom)
         self.atHome = True
-        self.lastKnownZoom = stage.homeZoom
+        self.requestedZoomPos = stage.homeZoom
         time.sleep(self.homePauseSeconds)
         
-    def evaluate(self, camera, stage, subject, face, faceCount):
+    def trackSubject(self, camera, stage, subject, face, faceCount):
         self.confidence = 100.0/faceCount if faceCount else 0
         self.subjectVolatile = subject.isVolatile()
-        if camera.zoomPos is not None and camera.zoomPos > 0:
-            self.lastKnownZoom = camera.zoomPos
 
-        if camera.lostPTZfeed():
-            camera.controller.zoomstop()
-
-        # Halt zoom if we are at correct tracking zoom level
-        if camera.controller.zoomOngoing():
-            if self.lastKnownZoom > stage.trackingZoom:
-                camera.controller.zoomstop()
-                       
         # Are we in motion and should we stay in motion?
         if camera.controller.panTiltOngoing():
             if self.confidence < self.minConfidence \
@@ -278,27 +268,22 @@ class Scene():
         if not face.recentlyVisible \
         and not self.atHome:
             self.goHome(camera, stage)
-            time.sleep(1)
             return
             
         if not face.recentlyVisible:
             return
          
-        # With many caveats...start zooming in on stable subject    
-        if False and subject.isCentered \
+        # Adjust to tracking zoom and tilt (closer)    
+        if subject.isCentered \
         and not self.subjectVolatile \
-        and self.lastKnownZoom > 0 \
-        and self.lastKnownZoom < stage.trackingZoom \
+        and self.requestedZoomPos > 0 \
+        and self.requestedZoomPos < stage.trackingZoom \
         and not camera.controller.zoomOngoing():
-            camera.controller.zoomin(0)
-            self.zoomTimer.reset()
-            # This is a cheat, in case camera doesn't report Z well
-            self.lastKnownZoom = stage.trackingZoom
+            camera.controller.zoomto(stage.trackingZoom)
+            self.requestedZoomPos = stage.trackingZoom
+            # Adjust to tracking tilt
+            camera.controller.gotoIncremental(0, stage.trackingTiltAdjustment, 5)
         
-        # Maybe we don't need to track
-        if subject.isCentered:
-            return
-            
         if subject.isFarLeft:
             camera.controller.left(1)
             self.atHome = False
@@ -369,17 +354,17 @@ def main(cfg):
             else:
                 face.lost()
             subject.evaluate(face, scene)
-            scene.evaluate(camera, stage, subject, face, len(faces))
+            scene.trackSubject(camera, stage, subject, face, len(faces))
 
-            # Decorate the image with CV findings and camera stats
+            #~ # Decorate the image with CV findings and camera stats
             #~ cv2.putText(raw, subject.text(), (5, 105),
                 #~ cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             #~ for (x, y, w, h) in faces:
                     #~ cv2.rectangle(raw, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
-            # show the output image with decorations
-            # (not easy to do on Docker)
+            #~ # show the output image with decorations
+            #~ # (not easy to do on Docker)
             #~ if g_debugMode:
                 #~ cv2.imshow("Output", raw) 
 

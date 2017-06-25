@@ -21,7 +21,7 @@
         "maxLeftPan": 64671,
         "maxRightPan": 256,
         "trackingZoom": 1250,
-        "trackingTilt": 210
+        "trackingTiltAdjustment": 60
     },
     "scene":{
         "imageWidth": 500,
