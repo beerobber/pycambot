@@ -176,7 +176,7 @@ class Camera():
     
     def __init__(self, cfg, usbdevnum):
         # Start by establishing control connection
-        pysca.connect('/dev/tty.usbserial')
+        pysca.connect(cfg['socket'])
 
         # Open video stream as CV camera
         self.cvcamera = cv2.VideoCapture(usbdevnum)
@@ -350,8 +350,8 @@ def main(cfg):
 
             #~ # show the output image with decorations
             #~ # (not easy to do on Docker)
-            #~ if g_debugMode:
-                #~ cv2.imshow("Output", raw) 
+            if g_debugMode:
+                cv2.imshow("Output", raw) 
 
         if fpsDisplay and fpsInterval.hasElapsed():
             print "{0:.1f} fps (processing)".format(fpsCounter.getFramerate())
