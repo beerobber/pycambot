@@ -234,9 +234,9 @@ class Scene():
         self.zoomTimer = RealtimeInterval(cfg["zoomMaxSecondsSafety"], False)
 
     def goHome(self, camera, stage):
-        pysca.pan_tilt(1, 0, 0)
-        pysca.pan_tilt(1, self.returnHomeSpeed, self.returnHomeSpeed, stage.homePan, stage.homeTilt)
-        pysca.set_zoom(1, stage.homeZoom)
+        pysca.pan_tilt(1, 0, 0, blocking=True)
+        pysca.pan_tilt(1, self.returnHomeSpeed, self.returnHomeSpeed, stage.homePan, stage.homeTilt, blocking=True)
+        pysca.set_zoom(1, stage.homeZoom, blocking=True)
         self.atHome = True
         self.requestedZoomPos = stage.homeZoom
         time.sleep(self.homePauseSeconds)
@@ -251,7 +251,7 @@ class Scene():
         or self.subjectVolatile \
         or subject.isCentered:
             # Stop all tracking motion
-            pysca.pan_tilt(1, 0, 0)
+            pysca.pan_tilt(1, 0, 0, blocking=True)
 
         # Should we return to home position?
         if not face.recentlyVisible \
@@ -268,8 +268,8 @@ class Scene():
         and not self.subjectVolatile \
         and self.requestedZoomPos > 0 \
         and self.requestedZoomPos < stage.trackingZoom:
-            pysca.pan_tilt(1, 0, 5, 0, stage.trackingTiltAdjustment, relative=True, blocking=False)
-            pysca.set_zoom(1, stage.trackingZoom)
+            pysca.pan_tilt(1, 0, 5, 0, stage.trackingTiltAdjustment, relative=True, blocking=True)
+            pysca.set_zoom(1, stage.trackingZoom, blocking=True)
             self.requestedZoomPos = stage.trackingZoom
         
         if subject.isFarLeft:
