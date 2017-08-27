@@ -11,8 +11,7 @@
         "offCenterPercentVariance": 60 
     },
     "camera":{
-        "ip": "10.9.8.31",
-        "viscaport": 5678
+        "socket": "/dev/ttyUSB0"
     },
     "stage":{
         "homePan": 65521,

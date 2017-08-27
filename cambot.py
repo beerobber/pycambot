@@ -4,9 +4,11 @@ import imutils
 import cv2
 import argparse
 import json
-from CameraController import PTZOptics20x
+import imp
 import time, sys, os, signal
 
+sys.path.append('../pysca')
+from pysca import pysca
 
 from RealtimeInterval import RealtimeInterval
 from CVParameterGroup import CVParameterGroup
@@ -165,9 +167,6 @@ class Subject():
 class Camera():
     cvcamera = None
     cvreader = None
-    controller = None
-    ip = ""
-    viscaport = 0
     width = 0
     height = 0
     panPos = 0
@@ -177,14 +176,7 @@ class Camera():
     
     def __init__(self, cfg, usbdevnum):
         # Start by establishing control connection
-        self.ip = cfg["ip"]
-        self.viscaport = int(cfg["viscaport"])
-        self.controller = PTZOptics20x(self.ip, self.viscaport)
-        if self.controller.init() is None:
-            self.controller = None
-            print "Exception: Can't communicate with " + \
-                str(self.ip) + ":" + str(self.viscaport)
-            return None
+        pysca.connect('/dev/tty.usbserial')
 
         # Open video stream as CV camera
         self.cvcamera = cv2.VideoCapture(usbdevnum)
@@ -193,23 +185,27 @@ class Camera():
         self.cvreader = CameraReaderAsync.CameraReaderAsync(self.cvcamera)
     
     def lostPTZfeed(self):
-        return False if self._badPTZcount < 5 else True
+        return True
+        # return False if self._badPTZcount < 5 else True
             
     def updatePTZ(self):
-        nowPanPos, nowTiltPos = self.controller.get_pan_tilt_position()
-        nowZoomPos = self.controller.get_zoom_position()
-        
-        if nowZoomPos < 0:
-            self._badPTZcount += 1
-            return
+        self._badPTZcount += 1
+        return
 
-        self._badPTZcount = 0
-        print "P: {0:d} T: {1:d} Z: {2:d}".format( \
-            nowPanPos, nowTiltPos, nowZoomPos)
-        
-        self.panPos = nowPanPos
-        self.tiltPos = nowTiltPos
-        self.zoomPos = nowZoomPos
+        # nowPanPos, nowTiltPos = pysca.get_pan_tilt_position()
+        # nowZoomPos = pysca.get_zoom_position()
+        #
+        # if nowZoomPos < 0:
+        #     self._badPTZcount += 1
+        #     return
+        #
+        # self._badPTZcount = 0
+        # print "P: {0:d} T: {1:d} Z: {2:d}".format( \
+        #     nowPanPos, nowTiltPos, nowZoomPos)
+        #
+        # self.panPos = nowPanPos
+        # self.tiltPos = nowTiltPos
+        # self.zoomPos = nowZoomPos
 
 class Stage():	
     def __init__(self, cfg):
@@ -236,17 +232,11 @@ class Scene():
         self.homePauseSeconds = cfg["homePauseSeconds"]
         self.homePauseTimer = RealtimeInterval(cfg["homePauseSeconds"], False)
         self.zoomTimer = RealtimeInterval(cfg["zoomMaxSecondsSafety"], False)
-        
-        camera.controller.reset()
-                
+
     def goHome(self, camera, stage):
-        camera.controller.cancel()
-        camera.controller.stop()
-        camera.controller.goto(
-            stage.homePan, 
-            stage.homeTilt, 
-            speed=self.returnHomeSpeed)
-        camera.controller.zoomto(stage.homeZoom)
+        pysca.pan_tilt(1, 0, 0)
+        pysca.pan_tilt(1, self.returnHomeSpeed, self.returnHomeSpeed, stage.homePan, stage.homeTilt)
+        pysca.set_zoom(1, stage.homeZoom)
         self.atHome = True
         self.requestedZoomPos = stage.homeZoom
         time.sleep(self.homePauseSeconds)
@@ -255,20 +245,21 @@ class Scene():
         self.confidence = 100.0/faceCount if faceCount else 0
         self.subjectVolatile = subject.isVolatile()
 
-        # Are we in motion and should we stay in motion?
-        if camera.controller.panTiltOngoing():
-            if self.confidence < self.minConfidence \
-            or not face.recentlyVisible \
-            or self.subjectVolatile \
-            or subject.isCentered:
-                camera.controller.stop()
-        
+        # Should we stay in motion?
+        if self.confidence < self.minConfidence \
+        or not face.recentlyVisible \
+        or self.subjectVolatile \
+        or subject.isCentered:
+            # Stop all tracking motion
+            pysca.pan_tilt(1, 0, 0)
+
         # Should we return to home position?
         if not face.recentlyVisible \
         and not self.atHome:
             self.goHome(camera, stage)
             return
-            
+
+        # Initiate no new tracking action unless face has been seen recently
         if not face.recentlyVisible:
             return
          
@@ -276,17 +267,16 @@ class Scene():
         if subject.isCentered \
         and not self.subjectVolatile \
         and self.requestedZoomPos > 0 \
-        and self.requestedZoomPos < stage.trackingZoom \
-        and not camera.controller.zoomOngoing():
-            camera.controller.gotoIncremental(0, stage.trackingTiltAdjustment, 5)
-            camera.controller.zoomto(stage.trackingZoom)
+        and self.requestedZoomPos < stage.trackingZoom:
+            pysca.pan_tilt(1, 0, 5, 0, stage.trackingTiltAdjustment, relative=True, blocking=False)
+            pysca.set_zoom(1, stage.trackingZoom)
             self.requestedZoomPos = stage.trackingZoom
         
         if subject.isFarLeft:
-            camera.controller.left(1)
+            pysca.pan_tilt(1, -1)
             self.atHome = False
         elif subject.isFarRight:
-            camera.controller.right(1)
+            pysca.pan_tilt(1, 1)
             self.atHome = False
                 
         return
@@ -297,9 +287,6 @@ def printif(message):
 
 def main(cfg):
     camera = Camera(cfg['camera'], args["usbDeviceNum"])
-    if camera.controller is None:
-        print "Failed to initialize camera"
-        return False
     stage = Stage(cfg['stage'])
     subject = Subject(cfg['subject'])
     face = Face(cfg['face'])
