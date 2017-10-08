@@ -273,10 +273,10 @@ class Scene():
             self.requestedZoomPos = stage.trackingZoom
         
         if subject.isFarLeft:
-            pysca.pan_tilt(1, -1)
+            pysca.pan_tilt(1, -2)
             self.atHome = False
         elif subject.isFarRight:
-            pysca.pan_tilt(1, 1)
+            pysca.pan_tilt(1, 2)
             self.atHome = False
                 
         return

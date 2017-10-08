@@ -15,15 +15,15 @@
     },
     "stage":{
         "homePan": 65521,
-        "homeTilt": 65474,
-        "homeZoom": 11306,
+        "homeTilt": 65505,
+        "homeZoom": 11815,
         "maxLeftPan": 64671,
         "maxRightPan": 256,
-        "trackingZoom": 13611,
-        "trackingTiltAdjustment": 15
+        "trackingZoom": 14775,
+        "trackingTiltAdjustment": 14
     },
     "scene":{
-        "imageWidth": 500,
+        "imageWidth": 600,
         "minConfidence": 45,
         "homePauseSeconds": 3,
         "returnHomeSpeed": 10,
